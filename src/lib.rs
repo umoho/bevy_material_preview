@@ -13,8 +13,7 @@ pub struct MaterialPreviewPlugin {
 impl Plugin for MaterialPreviewPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(RenderLayersInUse(self.render_layers.clone()));
-        app.add_systems(Startup, setup_studio);
-        app.add_systems(Update, render_studio);
+        app.add_systems(Update, (spawn_preview_studio, cleanup_studio));
     }
 }
 
@@ -58,125 +57,123 @@ pub struct RenderedMaterialPreview {
 }
 
 #[derive(Component)]
-struct StudioObject;
+struct StudioRoot {
+    /// 请求者
+    _user_entity: Entity,
+    frames_to_live: u8,
+}
 
-#[derive(Component)]
-struct StudioMesh;
-
-#[derive(Component)]
-struct StudioPlane;
-
-fn setup_studio(
+fn spawn_preview_studio(
     mut commands: Commands,
+    query: Query<(Entity, &MaterialPreviewToRender), Added<MaterialPreviewToRender>>,
     render_layers: Res<RenderLayersInUse>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    // 地板
-    commands.spawn((
-        Mesh3d(meshes.add(new_plane_mesh())),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color_texture: Some(images.add(new_checker_image())),
-            perceptual_roughness: 0.8,
-            ..Default::default()
-        })),
-        Transform::from_xyz(0.0, -1.0, 0.0),
-        render_layers.0.clone(),
-        StudioObject,
-        StudioPlane,
-    ));
-    // 球体
-    commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(1.0))),
-        MeshMaterial3d(materials.add(StandardMaterial::default())),
-        render_layers.0.clone(),
-        StudioObject,
-        StudioMesh,
-    ));
-    // 摄像机
-    commands.spawn((
-        Camera3d::default(),
-        Camera {
-            is_active: false,
-            clear_color: ClearColorConfig::None,
-            ..Default::default()
-        },
-        Transform::from_xyz(0.0, 1.5, 2.5).looking_at(Vec3::ZERO, Vec3::Y),
-        render_layers.0.clone(),
-        StudioObject,
-    ));
-    // 主灯
-    commands.spawn((
-        PointLight {
-            intensity: 1200000.0,
-            shadows_enabled: true,
-            ..Default::default()
-        },
-        Transform::from_xyz(4.0, 4.0, 2.0),
-        render_layers.0.clone(),
-        StudioObject,
-    ));
-    // 补灯 (背光, 边缘光)
-    commands.spawn((
-        PointLight {
-            intensity: 400000.0,
-            ..Default::default()
-        },
-        Transform::from_xyz(-4.0, 2.0, -2.0),
-        render_layers.0.clone(),
-        StudioObject,
-    ));
+    for (user_entity, request) in query {
+        // 计算唯一的偏移量
+        let offset = Vec3::new(user_entity.index_u32() as f32 * 50.0, 0.0, 0.0);
+
+        // 创建渲染目标纹理
+        let target_texture = images.add(Image::new_target_texture(
+            request.size.x,
+            request.size.y,
+            TextureFormat::Rgba8UnormSrgb,
+            None,
+        ));
+
+        // 计算摄像机本地变换
+        let camera_transform = calculate_camera_transform(request.distance_offset);
+        // 计算裁剪面
+        let total_dist = camera_transform.translation.length();
+
+        // 产生工作室节点
+        commands
+            .spawn((
+                StudioRoot {
+                    _user_entity: user_entity,
+                    frames_to_live: 3,
+                },
+                Transform::from_translation(offset),
+                Visibility::default(),
+                InheritedVisibility::default(),
+            ))
+            .with_children(|parent| {
+                // 球体
+                parent.spawn((
+                    Mesh3d(meshes.add(Sphere::new(1.0).mesh().ico(32).unwrap())),
+                    MeshMaterial3d(request.material.clone()),
+                    render_layers.0.clone(),
+                ));
+                // 地板 (按需生成)
+                if request.with_plane {
+                    parent.spawn((
+                        Mesh3d(meshes.add(new_plane_mesh())),
+                        MeshMaterial3d(materials.add(StandardMaterial {
+                            base_color_texture: Some(images.add(new_checker_image())),
+                            perceptual_roughness: 0.8,
+                            ..Default::default()
+                        })),
+                        Transform::from_xyz(0.0, -1.0, 0.0),
+                        render_layers.0.clone(),
+                    ));
+                }
+                // 摄像机
+                parent.spawn((
+                    Camera3d::default(),
+                    Camera {
+                        clear_color: ClearColorConfig::Custom(Color::NONE),
+                        ..Default::default()
+                    },
+                    Projection::Perspective(PerspectiveProjection {
+                        far: total_dist + 2.0,
+                        near: (total_dist - 2.0).max(0.1),
+                        aspect_ratio: request.size.x as f32 / request.size.y as f32,
+                        ..Default::default()
+                    }),
+                    RenderTarget::Image(target_texture.clone().into()),
+                    camera_transform,
+                    render_layers.0.clone(),
+                ));
+                // 主灯
+                parent.spawn((
+                    PointLight {
+                        intensity: 1200000.0,
+                        shadows_enabled: true,
+                        ..Default::default()
+                    },
+                    Transform::from_xyz(4.0, 4.0, 2.0),
+                    render_layers.0.clone(),
+                ));
+                // 补灯 (背光, 边缘光)
+                parent.spawn((
+                    PointLight {
+                        intensity: 400000.0,
+                        ..Default::default()
+                    },
+                    Transform::from_xyz(-4.0, 2.0, -2.0),
+                    render_layers.0.clone(),
+                ));
+            });
+
+        commands
+            .entity(user_entity)
+            .remove::<MaterialPreviewToRender>()
+            .insert(RenderedMaterialPreview {
+                image: target_texture,
+            });
+    }
 }
 
-type CameraComponents = (
-    &'static mut Camera,
-    &'static mut RenderTarget,
-    &'static mut Projection,
-    &'static mut Transform,
-);
-
-fn render_studio(
-    mut commands: Commands,
-    single: Single<(Entity, &MaterialPreviewToRender), Added<MaterialPreviewToRender>>,
-    studio_mesh_material: Single<&mut MeshMaterial3d<StandardMaterial>, With<StudioMesh>>,
-    studio_camera: Single<CameraComponents, With<StudioObject>>,
-    studio_plane: Single<&mut Visibility, With<StudioPlane>>,
-    mut images: ResMut<Assets<Image>>,
-) {
-    let (entity, request) = single.into_inner();
-
-    if !request.with_plane {
-        let mut visibility = studio_plane.into_inner();
-        *visibility = Visibility::Hidden;
+fn cleanup_studio(mut commands: Commands, query: Query<(Entity, &mut StudioRoot)>) {
+    for (root_entity, mut studio) in query {
+        if studio.frames_to_live <= 0 {
+            commands.entity(root_entity).despawn_children().despawn();
+        } else {
+            studio.frames_to_live -= 1;
+        }
     }
-
-    // 更换材质
-    let mut material = studio_mesh_material.into_inner();
-    *material = MeshMaterial3d(request.material.clone());
-
-    // 准备渲染目标, 激活摄像机并渲染到目标
-    let image = images.add(Image::new_target_texture(
-        request.size.x,
-        request.size.y,
-        TextureFormat::Rgba8UnormSrgb,
-        None,
-    ));
-    let (mut camera, mut target, mut projection, mut transform) = studio_camera.into_inner();
-    camera.is_active = true;
-    *target = RenderTarget::Image(image.clone().into());
-    // 同步宽高比
-    if let Projection::Perspective(ref mut perspective) = *projection {
-        // 计算纹理的宽高比
-        perspective.aspect_ratio = request.size.x as f32 / request.size.y as f32;
-    }
-    translate_camera_by_distance(&mut transform, request.distance_offset);
-
-    // 返回结果
-    commands
-        .entity(entity)
-        .remove::<MaterialPreviewToRender>()
-        .insert(RenderedMaterialPreview { image });
 }
 
 fn new_checker_image() -> Image {
@@ -226,12 +223,11 @@ fn new_plane_mesh() -> Mesh {
     plane
 }
 
-/// 使摄像机远离球体, 沿着摄像机看球体的反方向.
-fn translate_camera_by_distance(transform: &mut Transform, distance: f32) {
-    // 计算方向向量
-    let direction = transform.translation.normalize_or_zero();
-    // 计算最终位置：原始位置 + 方向 * 偏移量
-    let final_translation = transform.translation + direction * distance;
-    // 应用变换
-    *transform = Transform::from_translation(final_translation).looking_at(Vec3::ZERO, Vec3::Y);
+/// 根据距离偏移量计算摄像机的本地变换,
+/// 假设标准视角起点是 (0.0, 1.5, 2.5).
+fn calculate_camera_transform(distance_offset: f32) -> Transform {
+    let base_local_pos = Vec3::new(0.0, 1.5, 2.5);
+    let direction = base_local_pos.normalize_or_zero();
+    let final_local_pos = base_local_pos + direction * distance_offset;
+    Transform::from_translation(final_local_pos).looking_at(Vec3::ZERO, Vec3::Y)
 }
