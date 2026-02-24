@@ -28,11 +28,23 @@ impl Default for MaterialPreviewPlugin {
 #[derive(Resource)]
 struct RenderLayersInUse(RenderLayers);
 
-#[derive(Component, Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Component, Debug, Clone, PartialEq)]
 pub struct MaterialPreviewToRender {
     pub material: Handle<StandardMaterial>,
     pub size: UVec2,
     pub with_plane: bool,
+    pub camera_translation: Vec3,
+}
+
+impl Default for MaterialPreviewToRender {
+    fn default() -> Self {
+        Self {
+            material: Default::default(),
+            size: UVec2::splat(96),
+            with_plane: Default::default(),
+            camera_translation: (0.0, 1.5, 2.5).into(),
+        }
+    }
 }
 
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
@@ -104,11 +116,18 @@ fn setup_studio(
     ));
 }
 
+type CameraComponents = (
+    &'static mut Camera,
+    &'static mut RenderTarget,
+    &'static mut Projection,
+    &'static mut Transform,
+);
+
 fn render_studio(
     mut commands: Commands,
     single: Single<(Entity, &MaterialPreviewToRender), Added<MaterialPreviewToRender>>,
     studio_mesh_material: Single<&mut MeshMaterial3d<StandardMaterial>, With<StudioMesh>>,
-    studio_camera: Single<(&mut Camera, &mut RenderTarget, &mut Projection), With<StudioObject>>,
+    studio_camera: Single<CameraComponents, With<StudioObject>>,
     studio_plane: Single<&mut Visibility, With<StudioPlane>>,
     mut images: ResMut<Assets<Image>>,
 ) {
@@ -130,7 +149,7 @@ fn render_studio(
         TextureFormat::Rgba8UnormSrgb,
         None,
     ));
-    let (mut camera, mut target, mut projection) = studio_camera.into_inner();
+    let (mut camera, mut target, mut projection, mut transform) = studio_camera.into_inner();
     camera.is_active = true;
     *target = RenderTarget::Image(image.clone().into());
     // 同步宽高比
@@ -138,6 +157,9 @@ fn render_studio(
         // 计算纹理的宽高比
         perspective.aspect_ratio = request.size.x as f32 / request.size.y as f32;
     }
+    *transform = transform
+        .with_translation(request.camera_translation)
+        .looking_at(Vec3::ZERO, Vec3::Y);
 
     // 返回结果
     commands
