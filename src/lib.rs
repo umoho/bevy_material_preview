@@ -13,7 +13,8 @@ pub struct MaterialPreviewPlugin {
 impl Plugin for MaterialPreviewPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(RenderLayersInUse(self.render_layers.clone()));
-        app.add_systems(Update, (spawn_preview_studio, cleanup_studio));
+        app.add_systems(Update, cleanup_studio);
+        app.register_material_preview::<StandardMaterial>();
     }
 }
 
@@ -25,13 +26,23 @@ impl Default for MaterialPreviewPlugin {
     }
 }
 
+pub trait MaterialPreviewAppExt {
+    fn register_material_preview<M: Material>(&mut self) -> &mut Self;
+}
+
+impl MaterialPreviewAppExt for App {
+    fn register_material_preview<M: Material>(&mut self) -> &mut Self {
+        self.add_systems(Update, spawn_preview_studio::<M>)
+    }
+}
+
 #[derive(Resource)]
 struct RenderLayersInUse(RenderLayers);
 
 #[derive(Component, Debug, Clone, PartialEq)]
-pub struct MaterialPreviewToRender {
+pub struct MaterialPreviewToRender<M: Material> {
     /// 球体的材质.
-    pub material: Handle<StandardMaterial>,
+    pub material: Handle<M>,
     /// 渲染的图片的尺寸, 默认为 96x96.
     pub size: UVec2,
     /// 是否需要地板作为背景?
@@ -40,7 +51,7 @@ pub struct MaterialPreviewToRender {
     pub distance_offset: f32,
 }
 
-impl Default for MaterialPreviewToRender {
+impl<M: Material> Default for MaterialPreviewToRender<M> {
     fn default() -> Self {
         Self {
             material: Default::default(),
@@ -63,12 +74,12 @@ struct StudioRoot {
     frames_to_live: u8,
 }
 
-fn spawn_preview_studio(
+fn spawn_preview_studio<M: Material>(
     mut commands: Commands,
-    query: Query<(Entity, &MaterialPreviewToRender), Added<MaterialPreviewToRender>>,
+    query: Query<(Entity, &MaterialPreviewToRender<M>), Added<MaterialPreviewToRender<M>>>,
     render_layers: Res<RenderLayersInUse>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut standard_materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     for (user_entity, request) in query {
@@ -110,7 +121,7 @@ fn spawn_preview_studio(
                 if request.with_plane {
                     parent.spawn((
                         Mesh3d(meshes.add(new_plane_mesh())),
-                        MeshMaterial3d(materials.add(StandardMaterial {
+                        MeshMaterial3d(standard_materials.add(StandardMaterial {
                             base_color_texture: Some(images.add(new_checker_image())),
                             perceptual_roughness: 0.8,
                             ..Default::default()
@@ -159,7 +170,7 @@ fn spawn_preview_studio(
 
         commands
             .entity(user_entity)
-            .remove::<MaterialPreviewToRender>()
+            .remove::<MaterialPreviewToRender<M>>()
             .insert(RenderedMaterialPreview {
                 image: target_texture,
             });
