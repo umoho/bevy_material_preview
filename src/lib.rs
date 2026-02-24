@@ -31,10 +31,14 @@ struct RenderLayersInUse(RenderLayers);
 
 #[derive(Component, Debug, Clone, PartialEq)]
 pub struct MaterialPreviewToRender {
+    /// 球体的材质.
     pub material: Handle<StandardMaterial>,
+    /// 渲染的图片的尺寸, 默认为 96x96.
     pub size: UVec2,
+    /// 是否需要地板作为背景?
     pub with_plane: bool,
-    pub camera_translation: Vec3,
+    /// 使摄像机远离球体, 沿着摄像机看球体的反方向.
+    pub distance_offset: f32,
 }
 
 impl Default for MaterialPreviewToRender {
@@ -43,7 +47,7 @@ impl Default for MaterialPreviewToRender {
             material: Default::default(),
             size: UVec2::splat(96),
             with_plane: Default::default(),
-            camera_translation: (0.0, 1.5, 2.5).into(),
+            distance_offset: Default::default(),
         }
     }
 }
@@ -166,9 +170,7 @@ fn render_studio(
         // 计算纹理的宽高比
         perspective.aspect_ratio = request.size.x as f32 / request.size.y as f32;
     }
-    *transform = transform
-        .with_translation(request.camera_translation)
-        .looking_at(Vec3::ZERO, Vec3::Y);
+    translate_camera_by_distance(&mut transform, request.distance_offset);
 
     // 返回结果
     commands
@@ -222,4 +224,14 @@ fn new_plane_mesh() -> Mesh {
         }
     }
     plane
+}
+
+/// 使摄像机远离球体, 沿着摄像机看球体的反方向.
+fn translate_camera_by_distance(transform: &mut Transform, distance: f32) {
+    // 计算方向向量
+    let direction = transform.translation.normalize_or_zero();
+    // 计算最终位置：原始位置 + 方向 * 偏移量
+    let final_translation = transform.translation + direction * distance;
+    // 应用变换
+    *transform = Transform::from_translation(final_translation).looking_at(Vec3::ZERO, Vec3::Y);
 }
