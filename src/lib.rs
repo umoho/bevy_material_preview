@@ -1,7 +1,8 @@
 use bevy::{
     camera::{RenderTarget, visibility::RenderLayers},
+    image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     prelude::*,
-    render::render_resource::TextureFormat,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
 pub struct MaterialPreviewPlugin {
@@ -27,10 +28,11 @@ impl Default for MaterialPreviewPlugin {
 #[derive(Resource)]
 struct RenderLayersInUse(RenderLayers);
 
-#[derive(Component, Debug, Clone, PartialEq, Eq)]
+#[derive(Component, Default, Debug, Clone, PartialEq, Eq)]
 pub struct MaterialPreviewToRender {
     pub material: Handle<StandardMaterial>,
     pub size: UVec2,
+    pub with_plane: bool,
 }
 
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
@@ -41,18 +43,44 @@ pub struct RenderedMaterialPreview {
 #[derive(Component)]
 struct StudioObject;
 
+#[derive(Component)]
+struct StudioMesh;
+
+#[derive(Component)]
+struct StudioPlane;
+
 fn setup_studio(
     mut commands: Commands,
     render_layers: Res<RenderLayersInUse>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
+    // 地板
+    commands.spawn((
+        Mesh3d(meshes.add(Plane3d {
+            half_size: Vec2::splat(20.0),
+            ..Default::default()
+        })),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color_texture: Some(images.add(new_checker_image())),
+            perceptual_roughness: 0.8,
+            ..Default::default()
+        })),
+        Transform::from_xyz(0.0, -1.0, 0.0),
+        render_layers.0.clone(),
+        StudioObject,
+        StudioPlane,
+    ));
+    // 球体
     commands.spawn((
         Mesh3d(meshes.add(Sphere::new(1.0))),
         MeshMaterial3d(materials.add(StandardMaterial::default())),
         render_layers.0.clone(),
         StudioObject,
+        StudioMesh,
     ));
+    // 摄像机
     commands.spawn((
         Camera3d::default(),
         Camera {
@@ -60,12 +88,16 @@ fn setup_studio(
             clear_color: ClearColorConfig::None,
             ..Default::default()
         },
-        Transform::from_xyz(0.0, 1.5, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(0.0, 1.5, 2.5).looking_at(Vec3::ZERO, Vec3::Y),
         render_layers.0.clone(),
         StudioObject,
     ));
+    // 灯光
     commands.spawn((
-        PointLight::default(),
+        PointLight {
+            shadows_enabled: true,
+            ..Default::default()
+        },
         Transform::from_xyz(3.0, 3.0, 2.0),
         render_layers.0.clone(),
         StudioObject,
@@ -75,14 +107,17 @@ fn setup_studio(
 fn render_studio(
     mut commands: Commands,
     single: Single<(Entity, &MaterialPreviewToRender), Added<MaterialPreviewToRender>>,
-    studio_mesh_material: Single<
-        &mut MeshMaterial3d<StandardMaterial>,
-        (With<StudioObject>, With<Mesh3d>),
-    >,
+    studio_mesh_material: Single<&mut MeshMaterial3d<StandardMaterial>, With<StudioMesh>>,
     studio_camera: Single<(&mut Camera, &mut RenderTarget, &mut Projection), With<StudioObject>>,
+    studio_plane: Single<&mut Visibility, With<StudioPlane>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let (entity, request) = single.into_inner();
+
+    if !request.with_plane {
+        let mut visibility = studio_plane.into_inner();
+        *visibility = Visibility::Hidden;
+    }
 
     // 更换材质
     let mut material = studio_mesh_material.into_inner();
@@ -109,4 +144,35 @@ fn render_studio(
         .entity(entity)
         .remove::<MaterialPreviewToRender>()
         .insert(RenderedMaterialPreview { image });
+}
+
+fn new_checker_image() -> Image {
+    let size = Extent3d {
+        width: 2,
+        height: 2,
+        depth_or_array_layers: 1,
+    };
+    let pixel = [
+        40, 40, 40, 255, // 深灰
+        100, 100, 100, 255, // 中灰
+        100, 100, 100, 255, // 中灰
+        40, 40, 40, 255, // 深灰
+    ];
+    let mut checker = Image::new_fill(
+        size,
+        TextureDimension::D2,
+        &pixel,
+        TextureFormat::Rgba8UnormSrgb,
+        Default::default(),
+    );
+
+    checker.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Nearest,
+        min_filter: ImageFilterMode::Nearest,
+        ..Default::default()
+    });
+
+    checker
 }
