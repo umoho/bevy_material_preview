@@ -1,6 +1,7 @@
 use bevy::{
     camera::{RenderTarget, visibility::RenderLayers},
     image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
+    mesh::VertexAttributeValues,
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
@@ -70,10 +71,7 @@ fn setup_studio(
 ) {
     // 地板
     commands.spawn((
-        Mesh3d(meshes.add(Plane3d {
-            half_size: Vec2::splat(20.0),
-            ..Default::default()
-        })),
+        Mesh3d(meshes.add(new_plane_mesh())),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color_texture: Some(images.add(new_checker_image())),
             perceptual_roughness: 0.8,
@@ -104,13 +102,24 @@ fn setup_studio(
         render_layers.0.clone(),
         StudioObject,
     ));
-    // 灯光
+    // 主灯
     commands.spawn((
         PointLight {
+            intensity: 1200000.0,
             shadows_enabled: true,
             ..Default::default()
         },
-        Transform::from_xyz(3.0, 3.0, 2.0),
+        Transform::from_xyz(4.0, 4.0, 2.0),
+        render_layers.0.clone(),
+        StudioObject,
+    ));
+    // 补灯 (背光, 边缘光)
+    commands.spawn((
+        PointLight {
+            intensity: 400000.0,
+            ..Default::default()
+        },
+        Transform::from_xyz(-4.0, 2.0, -2.0),
         render_layers.0.clone(),
         StudioObject,
     ));
@@ -197,4 +206,20 @@ fn new_checker_image() -> Image {
     });
 
     checker
+}
+
+fn new_plane_mesh() -> Mesh {
+    // 缩放地板纹理坐标, 使格子看起来更密
+    let mut plane = Plane3d {
+        half_size: Vec2::splat(40.0),
+        ..Default::default()
+    }
+    .mesh()
+    .build();
+    if let Some(VertexAttributeValues::Float32x2(uvs)) = plane.attribute_mut(Mesh::ATTRIBUTE_UV_0) {
+        for uv in uvs.iter_mut() {
+            *uv = [uv[0] * 40.0, uv[1] * 40.0];
+        }
+    }
+    plane
 }
