@@ -13,6 +13,7 @@ pub struct MaterialPreviewPlugin {
 impl Plugin for MaterialPreviewPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(RenderLayersInUse(self.render_layers.clone()));
+        app.init_resource::<StudioLocationAllocator>();
         app.register_material_preview::<StandardMaterial>();
     }
 }
@@ -40,6 +41,29 @@ impl MaterialPreviewAppExt for App {
 
 #[derive(Resource)]
 struct RenderLayersInUse(RenderLayers);
+
+#[derive(Resource)]
+struct StudioLocationAllocator {
+    next_index: f32,
+    spacing: f32,
+}
+
+impl Default for StudioLocationAllocator {
+    fn default() -> Self {
+        Self {
+            next_index: Default::default(),
+            spacing: 100.0,
+        }
+    }
+}
+
+impl StudioLocationAllocator {
+    fn allocate(&mut self) -> f32 {
+        let ret = self.next_index * self.spacing;
+        self.next_index += 1.0;
+        ret
+    }
+}
 
 /// 材质预览的离屏渲染会话.
 ///
@@ -75,10 +99,11 @@ fn init_sessions<M: Material>(
     render_layers: Res<RenderLayersInUse>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut standard_materials: ResMut<Assets<StandardMaterial>>,
+    mut offsets: ResMut<StudioLocationAllocator>,
 ) {
     for (requirer, mut session) in new_sessions {
         // 计算唯一的偏移量
-        let offset = Vec3::new(requirer.index_u32() as f32 * 50.0, 0.0, 0.0);
+        let offset = Vec3::new(offsets.allocate(), 0.0, 0.0);
 
         // 创建渲染目标纹理
         let target_texture = images.add(Image::new_target_texture(
