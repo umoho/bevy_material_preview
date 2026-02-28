@@ -67,7 +67,7 @@ impl StudioLocationAllocator {
 
 /// 材质预览的离屏渲染会话.
 ///
-/// 当实体携带这个组件时, 由插件自动执行离屏渲染, 随后将结果放置于 `result` 字段;
+/// 当实体携带这个组件时, 由插件自动执行离屏渲染;
 /// 若更改这个组件的值, 则会触发重新渲染.
 #[derive(Component)]
 pub struct MaterialPreviewSession<M: Material> {
@@ -79,8 +79,11 @@ pub struct MaterialPreviewSession<M: Material> {
     pub with_plane: bool,
     /// 使摄像机沿着摄像机看物体的反方向远离物体.
     pub distance_offset: f32,
-    /// 渲染结果, 将由插件自动填充, 用户从这个字段读出结果.
-    pub result: Option<Handle<Image>>,
+    /// 渲染目标.
+    ///
+    /// - 若为 `None`, 插件将自动创建并回填;
+    /// - 若为 `Some`, 插件将渲染至该纹理 (请确保该纹理具有 `RENDER_ATTACHMENT` 用法).
+    pub target: Option<Handle<Image>>,
 }
 
 /// 存储该会话对应的3D场景实体句柄.
@@ -105,14 +108,20 @@ fn init_sessions<M: Material>(
         // 计算唯一的偏移量
         let offset = Vec3::new(offsets.allocate(), 0.0, 0.0);
 
-        // 创建渲染目标纹理
-        let target_texture = images.add(Image::new_target_texture(
-            session.size.x,
-            session.size.y,
-            TextureFormat::Rgba8UnormSrgb,
-            None,
-        ));
-        session.result = Some(target_texture.clone());
+        // 创建或使用组件提供的渲染目标纹理
+        let target_texture = match session.target {
+            Some(ref texture) => texture.clone(),
+            None => {
+                let texture = images.add(Image::new_target_texture(
+                    session.size.x,
+                    session.size.y,
+                    TextureFormat::Rgba8UnormSrgb,
+                    None,
+                ));
+                session.target = Some(texture.clone());
+                texture
+            }
+        };
 
         // 计算摄像机本地变换
         let camera_transform = calculate_camera_transform(session.distance_offset);
@@ -223,8 +232,22 @@ fn sync<M: Material>(
     mut visibilities: Query<&mut Visibility>,
     mut transforms: Query<&mut Transform>,
     mut projections: Query<&mut Projection>,
+    mut render_targets: Query<&mut RenderTarget>,
 ) {
     for (session, scene) in updated_sessions {
+        // 同步摄像机渲染目标
+        if let Some(target_handle) = &session.target {
+            if let Ok(mut render_target) = render_targets.get_mut(scene.camera_entity) {
+                // 使用 ID 判断是否不为同一张图片资源
+                if matches!(&*render_target, RenderTarget::Image(current) if current.handle.id() != target_handle.id())
+                {
+                    // 使用新提供的图片句柄作为渲染目标
+                    *render_target = RenderTarget::Image(target_handle.clone().into());
+                    info!("摄像机渲染目标已更新至新纹理: {:?}", target_handle.id());
+                }
+            }
+        }
+
         // 同步物体的材质
         if let Ok(mut material) = materials.get_mut(scene.object_entity) {
             *material = MeshMaterial3d(session.material.clone());
