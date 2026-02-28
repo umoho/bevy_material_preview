@@ -31,7 +31,10 @@ pub trait MaterialPreviewAppExt {
 
 impl MaterialPreviewAppExt for App {
     fn register_material_preview<M: Material>(&mut self) -> &mut Self {
-        self.add_systems(Update, init_sessions::<M>)
+        self.add_systems(Update, init_sessions::<M>);
+        self.add_systems(Update, sync::<M>);
+        self.add_observer(cleanup::<M>);
+        self
     }
 }
 
@@ -183,6 +186,67 @@ fn init_sessions<M: Material>(
             camera_entity: camera_entity.unwrap(),
             plane_entity: plane_entity.unwrap(),
         });
+    }
+}
+
+fn sync<M: Material>(
+    updated_sessions: Query<
+        (&MaterialPreviewSession<M>, &ActiveStudioScene),
+        Changed<MaterialPreviewSession<M>>,
+    >,
+    mut materials: Query<&mut MeshMaterial3d<M>>,
+    mut visibilities: Query<&mut Visibility>,
+    mut transforms: Query<&mut Transform>,
+    mut projections: Query<&mut Projection>,
+) {
+    for (session, scene) in updated_sessions {
+        // 同步物体的材质
+        if let Ok(mut material) = materials.get_mut(scene.object_entity) {
+            *material = MeshMaterial3d(session.material.clone());
+        }
+
+        // 同步地板可见性
+        if let Ok(mut visibility) = visibilities.get_mut(scene.plane_entity) {
+            *visibility = if session.with_plane {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            };
+        }
+
+        // 同步摄像机位置与投影参数
+        if let Ok(mut transform) = transforms.get_mut(scene.camera_entity) {
+            let new_transform = calculate_camera_transform(session.distance_offset);
+            *transform = new_transform;
+
+            // 如果变换改了, 裁剪面通常也需要微调
+            if let Ok(mut projection) = projections.get_mut(scene.camera_entity) {
+                if let Projection::Perspective(ref mut p) = *projection {
+                    let dist = new_transform.translation.length();
+                    p.aspect_ratio = session.size.x as f32 / session.size.y as f32;
+                    p.far = dist + 2.0;
+                    p.near = (dist - 2.0).max(0.1);
+                }
+            }
+        }
+    }
+}
+
+fn cleanup<M: Material>(
+    requirer: On<Remove, MaterialPreviewSession<M>>,
+    scenes: Query<&ActiveStudioScene>,
+    mut commands: Commands,
+) {
+    if let Ok(scene) = scenes.get(requirer.entity) {
+        // 销毁工作室的所有内容
+        if let Ok(mut entity_cmds) = commands.get_entity(scene.studio_root) {
+            entity_cmds.despawn_children().despawn();
+        }
+
+        // 移除由插件添加的关联信息
+        commands
+            .entity(requirer.entity)
+            .remove::<ActiveStudioScene>();
     }
 }
 
