@@ -5,3 +5,7 @@ edition = "2024"
 
 [dependencies]
 bevy = "0.18.0"
+
+[features]
+default = ["v1"]
+v1 = []
