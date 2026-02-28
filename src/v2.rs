@@ -86,6 +86,18 @@ pub struct MaterialPreviewSession<M: Material> {
     pub target: Option<Handle<Image>>,
 }
 
+impl<M: Material> Default for MaterialPreviewSession<M> {
+    fn default() -> Self {
+        Self {
+            material: Default::default(),
+            size: UVec2::splat(96),
+            with_plane: Default::default(),
+            distance_offset: Default::default(),
+            target: Default::default(),
+        }
+    }
+}
+
 /// 存储该会话对应的3D场景实体句柄.
 #[derive(Component)]
 struct ActiveStudioScene {
