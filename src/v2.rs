@@ -306,7 +306,8 @@ fn cleanup<M: Material>(
         // 移除由插件添加的关联信息
         commands
             .entity(requirer.entity)
-            .remove::<ActiveStudioScene>();
+            // 请求实体可能已经在外部被销毁, 这里使用 try_remove 静默跳过即可.
+            .try_remove::<ActiveStudioScene>();
     }
 }
 
